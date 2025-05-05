@@ -53,8 +53,13 @@ async function upgradePlaintextPasswords() {
 
 console.log("Connecting...:")
 
-app.use(cors());
+app.use(cors({
+    origin: 'http://localhost:8080',
+    credentials: true
+}));
+
 app.use(bodyParser.json());
+
 app.use(
     bodyParser.urlencoded({
         extended: true,
