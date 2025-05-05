@@ -4,23 +4,26 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const bcrypt = require('bcrypt');
 
+require('dotenv').config({ path: '../.env' });
+
+
 const { isBcryptHash } = require('./utils/hashUtils');
 
 const app = express();
 const cors = require('cors')
 
-const port=3000;
+const port = parseInt(process.env.PORT);
 
-const SALT_ROUNDS = 10;
+const SALT_ROUNDS = parseInt(process.env.SALT_ROUNDS);
 
 const pool = new pg.Pool({
-    user: 'secadv',
-    host: 'db',
-    database: 'pxldb',
-    password: 'ilovesecurity',
-    port: 5432,
+    user: process.env.DB_USER,
+    host: process.env.DB_HOST,
+    database: process.env.DB_NAME,
+    password: process.env.DB_PASSWORD,
+    port: parseInt(process.env.DB_PORT),
     connectionTimeoutMillis: 5000
-})
+});
 
 // check and update unhashed passwords
 async function upgradePlaintextPasswords() {
