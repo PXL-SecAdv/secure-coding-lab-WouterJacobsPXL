@@ -2,10 +2,16 @@ const pg = require('pg');
 
 const express = require('express');
 const bodyParser = require('body-parser');
+const bcrypt = require('bcrypt');
+
+const { isBcryptHash } = require('./utils/hashUtils');
+
 const app = express();
 const cors = require('cors')
 
 const port=3000;
+
+const SALT_ROUNDS = 10;
 
 const pool = new pg.Pool({
     user: 'secadv',
@@ -15,6 +21,35 @@ const pool = new pg.Pool({
     port: 5432,
     connectionTimeoutMillis: 5000
 })
+
+// check and update unhashed passwords
+async function upgradePlaintextPasswords() {
+    try {
+        const result = await pool.query('SELECT id, password FROM users');
+        const users = result.rows;
+
+        const updates = [];
+
+        for (const user of users) {
+            if (!isBcryptHash(user.password)) {
+                console.log(`User ID ${user.id} has plaintext password. Rehashing...`);
+                const hashedPassword = await bcrypt.hash(user.password, SALT_ROUNDS);
+                updates.push({ id: user.id, password: hashedPassword });
+            }
+        }
+
+        for (const u of updates) {
+            await pool.query('UPDATE users SET password = $1 WHERE id = $2', [u.password, u.id]);
+            console.log(`Updated password for user ID ${u.id}`);
+        }
+
+        console.log(`Password upgrade complete: ${updates.length} user(s) updated.`);
+    } catch (err) {
+        console.error('Error upgrading passwords:', err);
+        process.exit(1); // Stop app if DB fails
+    }
+}
+
 
 console.log("Connecting...:")
 
@@ -31,7 +66,7 @@ app.get('/authenticate/:username/:password', async (request, response) => {
     const password = request.params.password;
 
     // Check for SQL injection met regex
-    const sqlInjectionPattern = /['";\\=\-#$%^&*+<>()]/;
+    const sqlInjectionPattern = /['";\\=#$%^&*+<>()]/;
     if (sqlInjectionPattern.test(username) || sqlInjectionPattern.test(password)) {
         console.log(`Authentication attempt for user: ${username} : possible SQL Injection Attack`);
         return response.status(403).json({ error: 'Invalid input characters detected' });
@@ -49,16 +84,25 @@ app.get('/authenticate/:username/:password', async (request, response) => {
 
         try {
             // Gebruik van parameterized query
-            const query = 'SELECT user_name FROM users WHERE user_name=$1 AND password=$2';
-            const results = await client.query(query, [username, password]);
+            const query = 'SELECT user_name, password FROM users WHERE user_name=$1';
+            const results = await client.query(query, [username]);
 
-            // Add request logging for security auditing
-            console.log(`Authentication attempt for user: ${username} - Success: ${results.rows.length > 0}`);
-
-            // Return only the username of the authenticated user
+            // If the user is found, compare the plaintext password with the hashed password
             if (results.rows.length > 0) {
-                response.status(200).json({ username: results.rows[0].user_name });
+                const hashedPassword = results.rows[0].password;
+
+                // vergelijk password met stored hash
+                const isPasswordCorrect = await bcrypt.compare(password, hashedPassword);
+
+                if (isPasswordCorrect) {
+                    console.log(`Authentication attempt for user: ${username} - Success: true`);
+                    response.status(200).json({ username: results.rows[0].user_name });
+                } else {
+                    console.log(`Authentication attempt for user: ${username} - Success: failed`);
+                    response.status(401).json({ error: 'Authentication failed' });
+                }
             } else {
+                console.log(`Authentication attempt for user: ${username} - Success: failed`);
                 response.status(401).json({ error: 'Authentication failed' });
             }
         } finally {
@@ -72,7 +116,9 @@ app.get('/authenticate/:username/:password', async (request, response) => {
     }
 });
 
+upgradePlaintextPasswords().then(() => {
 app.listen(port, () => {
   console.log(`App running on port ${port}.`)
-})
+});
+});
 
